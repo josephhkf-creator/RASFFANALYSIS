@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Food Safety Recall (RASFF) Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    
+    <style>
+        :root {
+            --primary: #005a9e; --secondary: #f3f2f1; --text: #323130;
+            --danger: #d13438; --warning: #ffaa44; --success: #107c10; --info: #00bcf2;
+            --dark: #201f1e;
+        }
+        * { box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #faf9f8; color: var(--text);
+            margin: 0; padding: 0; height: 100vh;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        
+        /* Header */
+        header {
+            flex: 0 0 auto; background-color: white; padding: 15px 25px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: flex;
+            justify-content: space-between; align-items: center; z-index: 10;
+        }
+        header h2 { margin: 0; font-size: 20px; color: var(--primary); }
+        .controls { display: flex; gap: 15px; align-items: center; }
+        .upload-section { background: var(--secondary); padding: 8px 15px; border-radius: 6px; font-size: 14px; display: flex; align-items: center;}
+        
+        .btn {
+            background-color: var(--primary); color: white; border: none;
+            padding: 8px 15px; border-radius: 6px; font-weight: bold; cursor: pointer;
+            transition: background 0.2s; font-size: 14px; display: none; align-items: center; gap: 5px;
+        }
+        .btn:hover { background-color: #004578; }
+        
+        /* Main Grid Layout */
+        .dashboard-container {
+            display: none; flex: 1 1 auto; padding: 20px; gap: 20px;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: auto 1fr;
+            overflow-y: auto;
+        }
+        
+        .panel { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); padding: 20px; display: flex; flex-direction: column; }
+        .panel-title { margin: 0 0 15px 0; font-size: 16px; color: var(--primary); text-transform: uppercase; border-bottom: 2px solid var(--secondary); padding-bottom: 8px; }
+
+        /* KPI Row */
+        .kpi-row { grid-column: 1 / -1; display: flex; gap: 20px; }
+        .kpi-card { flex: 1; text-align: center; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        .kpi-card h3 { margin: 0 0 5px 0; font-size: 14px; color: #605e5c; text-transform: uppercase; }
+        .kpi-card .value { font-size: 24px; font-weight: bold; color: var(--primary); margin: 5px 0 0 0; }
+
+        /* Tables */
+        .table-scroll-container { flex: 1 1 auto; overflow-y: auto; max-height: 350px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+        th, td { padding: 8px 12px; border-bottom: 1px solid var(--secondary); }
+        th { background-color: var(--secondary); font-weight: 600; position: sticky; top: 0; z-index: 5; box-shadow: 0 1px 0 rgba(0,0,0,0.1); }
+        tr:hover { background-color: #fdfdfd; }
+        
+        .badge { padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; color: white; display: inline-block; }
+        .badge-serious { background: var(--danger); } 
+        .badge-not-serious { background: var(--success); }
+        .badge-potential { background: var(--warning); } 
+        .badge-undecided { background: #888; }
+
+        .chart-container { position: relative; height: 250px; width: 100%; margin-bottom: 15px; }
+
+        @media (max-width: 1024px) {
+            body { overflow: auto; }
+            .dashboard-container { display: flex !important; flex-direction: column; }
+            .kpi-row { flex-wrap: wrap; }
+            .table-scroll-container { max-height: 400px; }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h2>🛡️ Food Safety Recall (RASFF) Analytics</h2>
+    <div class="controls">
+        <div class="upload-section">
+            <label for="csvFileInput" style="font-weight: bold; margin-right:10px;">Load CSV:</label>
+            <input type="file" id="csvFileInput" accept=".csv" onchange="processCSV()" />
+        </div>
+        <button id="downloadPdfBtn" class="btn" onclick="generatePDF()">📄 Download Elegant PDF</button>
+    </div>
+</header>
+
+<div class="dashboard-container" id="dashboard">
+    
+    <div class="kpi-row">
+        <div class="kpi-card">
+            <h3>Total Records Analyzed</h3>
+            <p class="value" id="kpiTotal">0</p>
+        </div>
+        <div class="kpi-card">
+            <h3>Earliest Database Date</h3>
+            <p class="value" style="font-size: 18px; margin-top: 10px;" id="kpiEarliest">-</p>
+        </div>
+        <div class="kpi-card">
+            <h3>Latest Database Date</h3>
+            <p class="value" style="font-size: 18px; margin-top: 10px;" id="kpiLatest">-</p>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3 class="panel-title">1. Top 15 Reporting Countries</h3>
+        <div class="table-scroll-container">
+            <table id="countriesTable">
+                <thead><tr><th>#</th><th>Notifying Country</th><th>Total Occurrences</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3 class="panel-title">2. Risk Decision Breakdown</h3>
+        <div class="chart-container">
+            <canvas id="riskChart"></canvas>
+        </div>
+        <div class="table-scroll-container" style="max-height: 150px;">
+            <table id="riskTable">
+                <thead><tr><th>Risk Level</th><th>Occurrences</th><th>% of Total</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3 class="panel-title" style="color: var(--danger); border-bottom-color: var(--danger);">3. Top 15 Hazards (Under "Serious" Risk)</h3>
+        <div class="table-scroll-container">
+            <table id="hazardsTable">
+                <thead><tr><th>#</th><th>Main Issue / Hazard</th><th>Serious Occurrences</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3 class="panel-title" style="color: var(--danger); border-bottom-color: var(--danger);">4. Top 10 Affected Foods (Under "Serious" Risk)</h3>
+        <div class="table-scroll-container">
+            <table id="foodsTable">
+                <thead><tr><th>#</th><th>Food Category</th><th>Serious Occurrences</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script>
+let riskChartInstance = null;
+let currentFilename = "";
+
+// Date Parser for format "DD-MM-YY HH:MM"
+function parseCustomDate(dateStr) {
+    if (!dateStr) return null;
+    const parts = dateStr.trim().split(' ');
+    if (parts.length < 1) return null;
+    const dateParts = parts[0].split('-');
+    if (dateParts.length !== 3) return null;
+    
+    let day = parseInt(dateParts[0], 10);
+    let month = parseInt(dateParts[1], 10) - 1; // JS months are 0-11
+    let year = parseInt(dateParts[2], 10);
+    year = year < 50 ? 2000 + year : 1900 + year; // Handle YY format appropriately
+
+    let timeParts = parts[1] ? parts[1].split(':') : [0, 0];
+    return new Date(year, month, day, parseInt(timeParts[0]||0), parseInt(timeParts[1]||0));
+}
+
+function processCSV() {
+    const fileInput = document.getElementById('csvFileInput');
+    if (!fileInput.files.length) return;
+    currentFilename = fileInput.files[0].name;
+
+    Papa.parse(fileInput.files[0], {
+        header: true, skipEmptyLines: true,
+        complete: function(results) {
+            analyzeData(results.data);
+            document.getElementById('dashboard').style.display = 'grid';
+            document.getElementById('downloadPdfBtn').style.display = 'inline-flex';
+        }
+    });
+}
+
+function analyzeData(data) {
+    let earliestDate = null, latestDate = null;
+    let totalCount = 0;
+
+    let countryMap = {};
+    let riskMap = {
+        "serious": 0, "not serious": 0, "undecided": 0, 
+        "potential risk": 0, "potentially serious": 0, "no risk": 0, "other/unknown": 0
+    };
+    let hazardsMap = {};
+    let foodsMap = {};
+
+    data.forEach(row => {
+        const dateStr = row.date;
+        const country = (row.notifying_country || "Unknown").trim();
+        const riskRaw = (row.risk_decision || "").trim().toLowerCase();
+        const category = (row.category || "Unknown").trim();
+        const hazardStr = (row.hazards || "").trim();
+
+        // 1. Date calculation
+        if (dateStr) {
+            const rowDate = parseCustomDate(dateStr);
+            if (rowDate && !isNaN(rowDate)) {
+                if (!earliestDate || rowDate < earliestDate) earliestDate = rowDate;
+                if (!latestDate || rowDate > latestDate) latestDate = rowDate;
+            }
+        }
+
+        totalCount++;
+
+        // 2. Country calculation
+        if (country) countryMap[country] = (countryMap[country] || 0) + 1;
+
+        // 3. Risk Categories
+        let mappedRisk = "other/unknown";
+        if (riskRaw.includes("potentially serious")) mappedRisk = "potentially serious";
+        else if (riskRaw.includes("not serious")) mappedRisk = "not serious";
+        else if (riskRaw.includes("potential risk")) mappedRisk = "potential risk";
+        else if (riskRaw.includes("no risk")) mappedRisk = "no risk";
+        else if (riskRaw.includes("undecided")) mappedRisk = "undecided";
+        else if (riskRaw.includes("serious")) mappedRisk = "serious";
+        
+        riskMap[mappedRisk] = (riskMap[mappedRisk] || 0) + 1;
+
+        // 4 & 5. Filter for "Serious"
+        if (mappedRisk === "serious") {
+            // Hazards (split by comma if multiple)
+            if (hazardStr) {
+                let hazards = hazardStr.split(',');
+                hazards.forEach(h => {
+                    let cleanH = h.trim();
+                    if(cleanH) hazardsMap[cleanH] = (hazardsMap[cleanH] || 0) + 1;
+                });
+            }
+
+            // Categories (Foods)
+            if (category) foodsMap[category] = (foodsMap[category] || 0) + 1;
+        }
+    });
+
+    updateDashboard(earliestDate, latestDate, totalCount, countryMap, riskMap, hazardsMap, foodsMap);
+}
+
+function updateDashboard(earliest, latest, total, countryMap, riskMap, hazardsMap, foodsMap) {
+    // KPI Updates
+    document.getElementById('kpiTotal').innerText = total.toLocaleString();
+    const dateOptions = { year: 'numeric', month: 'short', day: 'numeric' };
+    document.getElementById('kpiEarliest').innerText = earliest ? earliest.toLocaleDateString(undefined, dateOptions) : 'N/A';
+    document.getElementById('kpiLatest').innerText = latest ? latest.toLocaleDateString(undefined, dateOptions) : 'N/A';
+
+    // 1. Top 15 Countries Table
+    populateSortedTable('countriesTable', countryMap, 15);
+
+    // 2. Risk Table & Chart
+    const riskTbody = document.querySelector('#riskTable tbody');
+    riskTbody.innerHTML = '';
+    const riskLabels = ["Serious", "Potentially Serious", "Potential Risk", "Not Serious", "No Risk", "Undecided", "Other/Unknown"];
+    const riskKeys = ["serious", "potentially serious", "potential risk", "not serious", "no risk", "undecided", "other/unknown"];
+    const riskData = [];
+    const riskColors = ['#d13438', '#ff7b00', '#ffaa44', '#107c10', '#00bcf2', '#888888', '#cccccc'];
+
+    riskKeys.forEach((k, index) => {
+        let count = riskMap[k] || 0;
+        riskData.push(count);
+        let pct = total > 0 ? ((count / total) * 100).toFixed(1) + '%' : '0%';
+        
+        let badgeClass = 'badge-undecided';
+        if (k.includes('serious') && !k.includes('not')) badgeClass = 'badge-serious';
+        else if (k.includes('potential')) badgeClass = 'badge-potential';
+        else if (k.includes('not serious') || k.includes('no risk')) badgeClass = 'badge-not-serious';
+
+        riskTbody.innerHTML += `<tr>
+            <td><span class="badge ${badgeClass}" style="background-color:${riskColors[index]}">${riskLabels[index]}</span></td>
+            <td><strong>${count.toLocaleString()}</strong></td>
+            <td>${pct}</td>
+        </tr>`;
+    });
+    renderRiskChart(riskLabels, riskData, riskColors);
+
+    // 3. Top 15 Hazards
+    populateSortedTable('hazardsTable', hazardsMap, 15);
+
+    // 4. Top 10 Foods
+    populateSortedTable('foodsTable', foodsMap, 10);
+}
+
+function populateSortedTable(tableId, mapData, limit) {
+    const tbody = document.querySelector(`#${tableId} tbody`);
+    tbody.innerHTML = '';
+    let sortedKeys = Object.keys(mapData).sort((a, b) => mapData[b] - mapData[a]).slice(0, limit);
+
+    if (sortedKeys.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;">No data available</td></tr>`;
+        return;
+    }
+
+    sortedKeys.forEach((key, index) => {
+        tbody.innerHTML += `<tr>
+            <td>${index + 1}</td>
+            <td style="font-weight: 500;">${key}</td>
+            <td><strong>${mapData[key].toLocaleString()}</strong></td>
+        </tr>`;
+    });
+}
+
+function renderRiskChart(labels, data, colors) {
+    const ctx = document.getElementById('riskChart').getContext('2d');
+    if (riskChartInstance) riskChartInstance.destroy();
+    
+    riskChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{ data: data, backgroundColor: colors, borderWidth: 1, borderColor: '#fff' }]
+        },
+        options: { 
+            responsive: true, maintainAspectRatio: false, 
+            plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: {size: 11} } } } 
+        }
+    });
+}
+
+// --- ELEGANT MULTI-PAGE PDF GENERATOR ---
+function generatePDF() {
+    const pdfBtn = document.getElementById('downloadPdfBtn');
+    pdfBtn.innerText = "Generating Print Report...";
+    pdfBtn.disabled = true;
+
+    const printContainer = document.createElement('div');
+    printContainer.style.fontFamily = "Arial, sans-serif";
+    printContainer.style.color = "#333";
+    printContainer.style.padding = "20px";
+
+    const chartImg = document.getElementById('riskChart').toDataURL("image/png");
+    const total = document.getElementById('kpiTotal').innerText;
+    const earliest = document.getElementById('kpiEarliest').innerText;
+    const latest = document.getElementById('kpiLatest').innerText;
+
+    const getCleanTable = (tableId) => {
+        const table = document.getElementById(tableId).cloneNode(true);
+        table.style.width = "100%"; table.style.borderCollapse = "collapse"; table.style.fontSize = "12px"; table.style.marginBottom = "20px";
+        table.querySelectorAll('th').forEach(th => { th.style.backgroundColor = "#f3f2f1"; th.style.padding = "8px"; th.style.borderBottom = "2px solid #ccc"; th.style.textAlign = "left"; });
+        table.querySelectorAll('td').forEach(td => { td.style.padding = "8px"; td.style.borderBottom = "1px solid #eee"; });
+        return table.outerHTML;
+    };
+
+    printContainer.innerHTML = `
+        <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="color: #005a9e; margin: 0 0 5px 0;">Food Safety Recall (RASFF) Analytics</h1>
+            <p style="color: #666; margin: 0;">File Analyzed: ${currentFilename} | Generated: ${new Date().toLocaleString()}</p>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #eee;">
+            <div style="text-align: center;"><strong>Total Records</strong><br><span style="font-size: 24px; color:#005a9e; font-weight:bold;">${total}</span></div>
+            <div style="text-align: center;"><strong>Earliest Log</strong><br><span style="font-size: 16px;">${earliest}</span></div>
+            <div style="text-align: center;"><strong>Latest Log</strong><br><span style="font-size: 16px;">${latest}</span></div>
+        </div>
+
+        <div style="display: flex; gap: 30px; margin-bottom: 20px;">
+            <div style="flex: 1;">
+                <h2 style="color: #333; border-bottom: 2px solid #005a9e; padding-bottom: 5px; font-size: 16px;">1. Top 15 Reporting Countries</h2>
+                ${getCleanTable('countriesTable')}
+            </div>
+            <div style="flex: 1;">
+                <h2 style="color: #333; border-bottom: 2px solid #005a9e; padding-bottom: 5px; font-size: 16px;">2. Risk Decision Breakdown</h2>
+                <div style="text-align: center; margin-bottom: 15px;"><img src="${chartImg}" style="max-height: 200px; width: auto;" /></div>
+                ${getCleanTable('riskTable')}
+            </div>
+        </div>
+
+        <div class="html2pdf__page-break"></div>
+
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h2 style="color: #d13438; margin:0;">🚨 Deep Dive: "Serious" Risk Decisions</h2>
+            <p style="color: #666; font-style: italic; font-size: 12px; margin-top: 5px;">The following analytics are filtered exclusively for records marked as "Serious Risk".</p>
+        </div>
+
+        <div style="display: flex; gap: 30px;">
+            <div style="flex: 1;">
+                <h3 style="color: #d13438; border-bottom: 2px solid #d13438; padding-bottom: 5px; font-size: 15px;">3. Top 15 Main Issues (Hazards)</h3>
+                ${getCleanTable('hazardsTable')}
+            </div>
+            <div style="flex: 1;">
+                <h3 style="color: #d13438; border-bottom: 2px solid #d13438; padding-bottom: 5px; font-size: 15px;">4. Top 10 Affected Foods</h3>
+                ${getCleanTable('foodsTable')}
+            </div>
+        </div>
+    `;
+
+    const opt = {
+        margin: [0.5, 0.5, 0.5, 0.5],
+        filename: 'Food_Safety_Recall_Report.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'in', format: 'a4', orientation: 'landscape' },
+        pagebreak: { mode: ['css', 'legacy'] }
+    };
+
+    html2pdf().set(opt).from(printContainer).save().then(() => {
+        pdfBtn.innerText = "📄 Download Elegant PDF";
+        pdfBtn.disabled = false;
+    }).catch(err => {
+        console.error(err);
+        alert("An error occurred during PDF generation.");
+        pdfBtn.innerText = "📄 Download Elegant PDF";
+        pdfBtn.disabled = false;
+    });
+}
+</script>
+
+</body>
+</html>
